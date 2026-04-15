@@ -1,0 +1,27 @@
+# Node modules
+node_modules/
+
+# Environment variables (IMPORTANT)
+.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+
+# Build folders
+dist/
+build/
+
+# Coverage
+coverage/
+
+# Temporary files
+tmp/
+temp/
+
+# VS Code settings (optional)
+.vscode/
