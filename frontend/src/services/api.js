@@ -1,10 +1,13 @@
 import axios from 'axios';
-import API from '../config/api';
 
-const baseURL = API || 'http://localhost:5001';
+const baseURL = import.meta.env.VITE_API_URL;
+
+if (!baseURL) {
+  throw new Error("VITE_API_URL is not defined");
+}
 
 const api = axios.create({
-  baseURL
+  baseURL,
 });
 
 api.interceptors.request.use((config) => {
