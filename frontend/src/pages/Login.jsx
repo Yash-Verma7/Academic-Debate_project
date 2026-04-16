@@ -18,7 +18,7 @@ function Login() {
     setError('');
 
     try {
-      const endpoint = isRegister ? '/auth/register' : '/auth/login';
+      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
       const payload = isRegister
         ? form
         : {

@@ -9,6 +9,7 @@ function DebateRoom() {
   const { debateId } = useParams();
   const [debate, setDebate] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const token = useMemo(() => localStorage.getItem('token'), []);
@@ -16,11 +17,14 @@ function DebateRoom() {
   useEffect(() => {
     const loadDebate = async () => {
       try {
-        const { data } = await api.get(`/debates/${debateId}`);
+        setLoading(true);
+        const { data } = await api.get(`/api/debates/${debateId}`);
         setDebate(data);
         setMessages(data.arguments || []);
       } catch (apiError) {
         setError(apiError.response?.data?.message || 'Failed to load debate room');
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -68,6 +72,7 @@ function DebateRoom() {
       <Link to="/debates">← Back to debates</Link>
       <h2>{debate?.title || 'Debate Room'}</h2>
       <p className="subtle">{debate?.topic}</p>
+      {loading && <p className="subtle">Loading debate room...</p>}
       {error && <p className="error-text">{error}</p>}
       <MessageList messages={messages} />
       <ArgumentBox onSend={handleSend} />

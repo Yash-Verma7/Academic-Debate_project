@@ -4,6 +4,7 @@ import api from '../services/api';
 
 function DebateList() {
   const [debates, setDebates] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [form, setForm] = useState({ title: '', topic: '', rounds: 3 });
   const navigate = useNavigate();
@@ -12,11 +13,14 @@ function DebateList() {
 
   const loadDebates = async () => {
     try {
+      setLoading(true);
       setError('');
-      const { data } = await api.get('/debates');
+      const { data } = await api.get('/api/debates');
       setDebates(data);
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to load debates');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -28,7 +32,7 @@ function DebateList() {
     event.preventDefault();
 
     try {
-      await api.post('/debates', {
+      await api.post('/api/debates', {
         title: form.title,
         topic: form.topic,
         rounds: Number(form.rounds)
@@ -55,6 +59,7 @@ function DebateList() {
         </button>
       </div>
       {error && <p className="error-text">{error}</p>}
+      {loading && <p className="subtle">Loading debates...</p>}
 
       {user.role === 'moderator' && (
         <form onSubmit={handleCreate} className="form-grid" style={{ marginBottom: 16 }}>

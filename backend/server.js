@@ -13,36 +13,56 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
+const allowedOrigins = (process.env.CLIENT_URLS || process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true
+  })
+);
+
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: allowedOrigins,
     methods: ['GET', 'POST']
   }
 });
 
-app.use(
-  cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173'
-  })
-);
 app.use(express.json());
+
+app.get('/', (req, res) => {
+  res.send('API is running');
+});
 
 app.get('/health', (_req, res) => {
   res.status(200).json({ message: 'Backend is running' });
 });
 
-app.use('/auth', authRoutes);
-app.use('/debates', debateRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/debates', debateRoutes);
 
 registerDebateSocket(io);
 
-const port = process.env.PORT || 5000;
+app.use((req, res) => {
+  res.status(404).json({ message: 'Route not found' });
+});
+
+app.use((err, _req, res, _next) => {
+  console.error('Unhandled error:', err.message);
+  res.status(err.status || 500).json({ message: err.message || 'Internal server error' });
+});
+
+const PORT = process.env.PORT || 5001;
 
 const startServer = async () => {
   try {
     await connectDB();
-    server.listen(port, () => {
-      console.log(`Server listening on port ${port}`);
+    server.listen(PORT, () => {
+      console.log(`Server listening on port ${PORT}`);
     });
   } catch (error) {
     console.error('Startup failed:', error.message);
