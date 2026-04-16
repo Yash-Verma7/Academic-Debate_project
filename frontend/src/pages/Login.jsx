@@ -19,18 +19,32 @@ function Login() {
 
     try {
       const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
+
       const payload = isRegister
-        ? form
+        ? {
+            name: form.name,
+            email: form.email,
+            password: form.password,
+            role: form.role
+          }
         : {
             email: form.email,
             password: form.password
           };
 
-      const { data } = await api.post(endpoint, payload);
+      console.log('Auth payload:', payload);
+
+      const { data } = await api.post(endpoint, payload, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       navigate('/debates');
     } catch (apiError) {
+      console.log('Auth error response:', apiError.response?.data);
       setError(apiError.response?.data?.message || 'Authentication failed');
     }
   };
