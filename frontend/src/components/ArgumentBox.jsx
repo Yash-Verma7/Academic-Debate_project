@@ -1,23 +1,30 @@
 import { useState } from 'react';
 
-function ArgumentBox({ onSend }) {
+function ArgumentBox({ onSend, joinedSide }) {
   const [content, setContent] = useState('');
-  const [type, setType] = useState('argument');
+  const [side, setSide] = useState('pro');
 
   const handleSubmit = (event) => {
     event.preventDefault();
     if (!content.trim()) return;
 
-    onSend({ content: content.trim(), type });
+    onSend({ content: content.trim(), side: joinedSide || side });
+    setContent('');
+  };
+
+  const clearInput = () => {
     setContent('');
   };
 
   return (
     <form onSubmit={handleSubmit} className="form-grid" style={{ marginTop: 16 }}>
-      <select value={type} onChange={(event) => setType(event.target.value)}>
-        <option value="argument">Argument</option>
-        <option value="rebuttal">Rebuttal</option>
-        <option value="question">Question</option>
+      <select
+        value={joinedSide || side}
+        onChange={(event) => setSide(event.target.value)}
+        disabled={Boolean(joinedSide)}
+      >
+        <option value="pro">Pro</option>
+        <option value="con">Con</option>
       </select>
       <textarea
         rows={3}
@@ -25,9 +32,14 @@ function ArgumentBox({ onSend }) {
         onChange={(event) => setContent(event.target.value)}
         placeholder="Write your point..."
       />
-      <button type="submit">
-        Send
-      </button>
+      <div className="button-group">
+        <button type="submit" className="success">
+          Send Argument
+        </button>
+        <button type="button" className="ghost" onClick={clearInput}>
+          Clear
+        </button>
+      </div>
     </form>
   );
 }

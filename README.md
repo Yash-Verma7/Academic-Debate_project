@@ -1,22 +1,33 @@
-# Real-Time Academic Debate Platform
+# Academic Debate Platform
 
-Minimal full-stack implementation with:
-- **Backend:** Node.js, Express, MongoDB (Mongoose), Socket.IO, JWT, bcrypt
-- **Frontend:** React (Vite), Axios, Socket.IO Client
+Full-stack academic debate platform with a modern dashboard and real-time argument flow.
+
+- **Frontend:** React + Vite + Axios + React Router
+- **Backend:** Node.js + Express + JWT + Socket.IO
+- **Database:** MongoDB Atlas via Mongoose
 
 ## Project Structure
 
-- `backend/` → API, auth, Mongo models, Socket.IO server
-- `frontend/` → React UI, Axios API client, Socket.IO client
+- `frontend/` → UI, routing, API client, socket client
+- `backend/` → REST APIs, auth, Mongoose models, socket server
 
-## 1) Backend Setup
+## Backend Setup
 
-`backend/.env` is already created. Update values if needed:
+Create/update `backend/.env`:
 
-- `PORT=5001`
-- `MONGO_URI=mongodb://127.0.0.1:27017/academic_debate`
-- `JWT_SECRET=replace_with_strong_secret`
-- `CLIENT_URL=http://localhost:5173`
+```bash
+PORT=5001
+MONGO_URI=mongodb+srv://<username>:<password>@<cluster>/academic_debate?retryWrites=true&w=majority
+JWT_SECRET=your_strong_secret
+CLIENT_URLS=http://localhost:5173,https://your-frontend.vercel.app
+CLIENT_URL=http://localhost:5173
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your_email@example.com
+SMTP_PASS=your_email_password_or_app_password
+SMTP_FROM=Academic Debate <no-reply@academicdebate.local>
+```
 
 Run backend:
 
@@ -26,7 +37,13 @@ npm install
 npm run dev
 ```
 
-## 2) Frontend Setup
+## Frontend Setup
+
+Create/update `frontend/.env.development`:
+
+```bash
+VITE_API_URL=http://localhost:5001
+```
 
 Run frontend:
 
@@ -36,39 +53,120 @@ npm install
 npm run dev
 ```
 
-Frontend runs on `http://localhost:5173` and calls backend at `http://localhost:5000`.
+## Core Schemas
 
-## Authentication
+### User
+- `name` (required)
+- `email` (required, unique)
+- `password` (hashed)
+- `role` (`student | moderator`)
+- `points` (default `0`)
+- `createdAt`
 
-- `POST /auth/register`
-- `POST /auth/login`
+### Debate
+- `title` (required)
+- `topic`
+- `description`
+- `category` (`Technology | Science | Politics | Education | Environment`)
+- `status` (`live | upcoming`)
+- `scheduledTime`
+- `watchersCount`
+- `proVotes`, `conVotes`
+- `createdBy` (User ref)
+- `participants.proUser` (User ref)
+- `participants.conUser` (User ref)
+- `participantLabels.proLabel`, `participantLabels.conLabel`
 
-JWT token is stored in `localStorage` and attached automatically in Axios requests.
+### Argument
+- `debateId` (Debate ref)
+- `userId` (User ref)
+- `side` (`pro | con`)
+- `type` (`argument | rebuttal | question`)
+- `content`
+- `createdAt`
 
-## Debate APIs
+## API Endpoints
 
-- `GET /debates` (protected)
-- `POST /debates` (protected, moderator only)
-- `GET /debates/:id` (protected)
+### Auth
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password/:token`
+
+### Debates (JWT Protected)
+- `GET /api/debates`
+- `GET /api/debates/home-feed` (recent + trending)
+- `GET /api/debates/latest`
+- `POST /api/debates`
+- `GET /api/debates/:id`
+- `POST /api/debates/:id/join`
+- `POST /api/debates/:id/watch`
+- `POST /api/debates/:id/vote`
+
+### Messages (JWT Protected)
+- `GET /api/messages/:debateId`
+- `POST /api/messages`
+
+### Users (JWT Protected)
+- `GET /api/users/leaderboard` (top 5 by points)
+- `GET /api/users/profile`
+- `PUT /api/users/profile`
 
 ## Socket Events
 
 ### Client → Server
-- `joinDebate` with `debateId`
-- `sendArgument` with:
-  - `debateId`
-  - `content`
-  - `type` (`argument | rebuttal | question`)
-  - `roundNumber` (optional)
+- `joinDebate` → `{ debateId }`
+- `sendMessage` / `sendArgument` → `{ debateId, side, type, content }`
 
 ### Server → Client
-- `newArgument` (broadcast to debate room)
-- `errorMessage` (validation/auth errors)
+- `newArgument`
+- `errorMessage`
 
-## Basic Usage Flow
+## Validation Checklist
 
-1. Register/Login from frontend.
-2. Moderator creates a debate.
-3. Users open the same debate room.
-4. Users send arguments in real-time.
-5. Arguments are persisted in MongoDB and broadcast instantly.
+The implementation has been smoke-tested for:
+
+- Register user
+- Login user
+- Create debate
+- Join debate side (`pro`/`con`)
+- Vote in debate poll (`pro`/`con`)
+- Register watcher count
+- Fetch debates
+- Fetch home dashboard feed
+- Fetch leaderboard
+- Frontend production build
+
+## Frontend Routes
+
+- `/login` → Login
+- `/signup` → Sign up with role selector
+- `/forgot-password` → Request reset link
+- `/reset-password/:token` → Set new password
+- `/home` → Dashboard with recent/trending sections
+- `/debate-rooms` → Full debate listing with filters/search/category
+- `/debates/:debateId` → Real-time room (Pro/Con chat, participants, timer, voting)
+- `/leaderboard` → Top debaters
+- `/profile` → Profile view/edit
+
+## Password Reset Flow
+
+1. User submits email on `/forgot-password`.
+2. Backend creates secure reset token + 1-hour expiry in `users` collection.
+3. Backend sends reset URL to user email (`/reset-password/:token`).
+4. User submits new password and confirmation.
+5. Backend verifies token, hashes password, and clears reset token fields.
+
+If SMTP is not configured, backend logs the reset link to terminal for local development.
+
+## Deployment Ready
+
+### Frontend (Vercel)
+- Env var: `VITE_API_URL=https://your-backend.onrender.com`
+- Build: `npm run build`
+- Output: `frontend/dist`
+
+### Backend (Render)
+- Start command: `npm start`
+- Uses dynamic port: `process.env.PORT || 5001`
+- Ensure `MONGO_URI`, `JWT_SECRET`, `CLIENT_URLS` are set

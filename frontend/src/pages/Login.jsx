@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
 function Login() {
-  const [isRegister, setIsRegister] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'student' });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const updateField = (event) => {
@@ -16,25 +17,14 @@ function Login() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+    setSuccess('');
+    setLoading(true);
 
     try {
-      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
-
-      const payload = isRegister
-        ? {
-            name: form.name,
-            email: form.email,
-            password: form.password,
-            role: form.role
-          }
-        : {
-            email: form.email,
-            password: form.password
-          };
-
-      console.log('Auth payload:', payload);
-
-      const { data } = await api.post(endpoint, payload, {
+      const { data } = await api.post('/api/auth/login', {
+        email: form.email,
+        password: form.password
+      }, {
         headers: {
           'Content-Type': 'application/json'
         }
@@ -42,56 +32,74 @@ function Login() {
 
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
-      navigate('/debates');
+      setSuccess('Login successful. Redirecting...');
+      navigate('/home');
     } catch (apiError) {
-      console.log('Auth error response:', apiError.response?.data);
       setError(apiError.response?.data?.message || 'Authentication failed');
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="card">
-      <h2>{isRegister ? 'Register' : 'Login'}</h2>
-      <form onSubmit={handleSubmit} className="form-grid">
-        {isRegister && (
-          <input
-            name="name"
-            placeholder="Full name"
-            value={form.name}
-            onChange={updateField}
-            required
-          />
-        )}
-        <input
-          name="email"
-          placeholder="Email"
-          value={form.email}
-          onChange={updateField}
-          type="email"
-          required
-        />
-        <input
-          name="password"
-          placeholder="Password"
-          value={form.password}
-          onChange={updateField}
-          type="password"
-          required
-        />
-        {isRegister && (
-          <select name="role" value={form.role} onChange={updateField}>
-            <option value="student">Student</option>
-            <option value="moderator">Moderator</option>
-          </select>
-        )}
-        <button type="submit">
-          {isRegister ? 'Register' : 'Login'}
-        </button>
-      </form>
-      {error && <p className="error-text">{error}</p>}
-      <button type="button" className="secondary" onClick={() => setIsRegister((prev) => !prev)}>
-        {isRegister ? 'Already have an account? Login' : 'Need an account? Register'}
-      </button>
+    <div className="auth-page auth-modern-page">
+      <div className="auth-modern-card">
+        <div className="auth-modern-top">
+          <div className="auth-logo-badge" aria-hidden="true">🔐</div>
+          <h2>Welcome Back</h2>
+          <p>Sign in to continue to debate dashboard</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="form-grid auth-modern-form">
+          <div className="auth-field-group">
+            <label htmlFor="email" className="auth-field-label">Email</label>
+            <div className="auth-input-wrap">
+              <span className="auth-input-icon" aria-hidden="true">✉️</span>
+              <input
+                id="email"
+                name="email"
+                placeholder="name@example.com"
+                value={form.email}
+                onChange={updateField}
+                type="email"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="auth-field-group">
+            <label htmlFor="password" className="auth-field-label">Password</label>
+            <div className="auth-input-wrap">
+              <span className="auth-input-icon" aria-hidden="true">🔒</span>
+              <input
+                id="password"
+                name="password"
+                placeholder="••••••••"
+                value={form.password}
+                onChange={updateField}
+                type="password"
+                required
+              />
+            </div>
+
+            <div className="auth-inline-action">
+              <Link to="/forgot-password" className="auth-text-link">Forgot Password?</Link>
+            </div>
+          </div>
+
+          <button type="submit" className="auth-signin-btn" disabled={loading}>
+            {loading ? 'Signing In...' : 'Sign In'}
+          </button>
+        </form>
+
+        {error && <p className="error-text">{error}</p>}
+        {success && <p className="success-text">{success}</p>}
+
+        <p className="auth-modern-bottom">
+          Don&apos;t have an account?{' '}
+          <Link to="/signup" className="auth-switch-link">Sign Up</Link>
+        </p>
+      </div>
     </div>
   );
 }

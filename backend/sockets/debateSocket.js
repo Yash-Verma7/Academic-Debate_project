@@ -1,7 +1,40 @@
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const Debate = require('../models/Debate');
+const User = require('../models/User');
+const LiveChat = require('../models/LiveChat');
 const Argument = require('../models/Argument');
+
+const MESSAGE_ROLES = ['pro', 'con', 'audience'];
+const MESSAGE_TYPES = ['argument', 'rebuttal', 'question'];
+
+const toArgumentPayload = (entry, fallbackUserRole) => ({
+  _id: entry._id,
+  debateId: entry.debateId,
+  userId: entry.userId,
+  content: entry.content,
+  side: entry.side,
+  role: entry.side,
+  type: entry.type || 'argument',
+  likesCount: 0,
+  likedBy: [],
+  userRole: fallbackUserRole,
+  createdAt: entry.createdAt
+});
+
+const toAudiencePayload = (entry, fallbackUserRole) => ({
+  _id: entry._id,
+  debateId: entry.debateId,
+  userId: entry.userId,
+  content: entry.message,
+  side: 'audience',
+  role: 'audience',
+  type: 'live',
+  likesCount: entry.likesCount || 0,
+  likedBy: entry.likedBy || [],
+  userRole: fallbackUserRole,
+  createdAt: entry.createdAt
+});
 
 const parseToken = (socket) => {
   const authToken = socket.handshake.auth?.token;
@@ -44,9 +77,9 @@ const registerDebateSocket = (io) => {
       socket.join(debateId);
     });
 
-    socket.on('sendArgument', async (data) => {
+    const handleSendMessage = async (data) => {
       try {
-        const { debateId, content, type = 'argument', roundNumber = 1 } = data || {};
+        const { debateId, content, side, role, type } = data || {};
 
         if (!mongoose.Types.ObjectId.isValid(debateId)) {
           socket.emit('errorMessage', { message: 'Invalid debate ID' });
@@ -54,30 +87,114 @@ const registerDebateSocket = (io) => {
         }
 
         if (!content || typeof content !== 'string' || !content.trim()) {
-          socket.emit('errorMessage', { message: 'Argument content is required' });
+          socket.emit('errorMessage', { message: 'Message content is required' });
           return;
         }
 
+        const requestedRole = (role || side || '').toLowerCase();
+        const normalizedSide = MESSAGE_ROLES.includes(requestedRole) ? requestedRole : 'audience';
+        const requestedType = (type || '').toLowerCase();
+        const normalizedType = MESSAGE_TYPES.includes(requestedType) ? requestedType : 'argument';
+
         const debate = await Debate.findById(debateId);
-        if (!debate || debate.status !== 'active') {
+        if (!debate || debate.status !== 'live') {
           socket.emit('errorMessage', { message: 'Debate unavailable' });
           return;
         }
 
-        const saved = await Argument.create({
+        const latestUser = await User.findById(socket.user.id).select('role');
+
+        const trimmed = content.trim();
+
+        if (normalizedSide === 'audience') {
+          const recentDuplicate = await LiveChat.findOne({
+            debateId,
+            userId: socket.user.id,
+            role: 'audience',
+            message: trimmed,
+            createdAt: { $gte: new Date(Date.now() - 2000) }
+          }).sort({ createdAt: -1 });
+
+          if (recentDuplicate) {
+            const existing = await recentDuplicate.populate('userId', 'name firstName middleName lastName email role profileImage avatarUrl');
+            io.to(debateId).emit('newArgument', toAudiencePayload(existing, latestUser?.role || socket.user.role || 'student'));
+            return;
+          }
+
+          const savedAudienceMessage = await LiveChat.create({
+            debateId,
+            userId: socket.user.id,
+            role: 'audience',
+            message: trimmed
+          });
+
+          const populatedAudience = await savedAudienceMessage.populate('userId', 'name firstName middleName lastName email role profileImage avatarUrl');
+          await User.findByIdAndUpdate(socket.user.id, { $inc: { points: 2 } });
+
+          io.to(debateId).emit('newArgument', toAudiencePayload(populatedAudience, latestUser?.role || socket.user.role || 'student'));
+        } else {
+          const allowedUserId = normalizedSide === 'pro' ? debate.participants?.proUser : debate.participants?.conUser;
+          if (!allowedUserId || allowedUserId.toString() !== socket.user.id) {
+            socket.emit('errorMessage', { message: `You must join as ${normalizedSide.toUpperCase()} before posting` });
+            return;
+          }
+
+          const recentDuplicate = await Argument.findOne({
+            debateId,
+            userId: socket.user.id,
+            side: normalizedSide,
+            type: normalizedType,
+            content: trimmed,
+            createdAt: { $gte: new Date(Date.now() - 2000) }
+          }).sort({ createdAt: -1 });
+
+          if (recentDuplicate) {
+            const existing = await recentDuplicate.populate('userId', 'name firstName middleName lastName email role profileImage avatarUrl');
+            io.to(debateId).emit('newArgument', toArgumentPayload(existing, latestUser?.role || socket.user.role || 'student'));
+            return;
+          }
+
+          const savedArgument = await Argument.create({
+            debateId,
+            userId: socket.user.id,
+            side: normalizedSide,
+            type: normalizedType,
+            content: trimmed
+          });
+
+          const populatedArgument = await savedArgument.populate('userId', 'name firstName middleName lastName email role profileImage avatarUrl');
+          await User.findByIdAndUpdate(socket.user.id, { $inc: { points: 2 } });
+
+          io.to(debateId).emit('newArgument', toArgumentPayload(populatedArgument, latestUser?.role || socket.user.role || 'student'));
+        }
+
+        io.emit('debateActivity', {
           debateId,
-          userId: socket.user.id,
-          roundNumber,
-          content: content.trim(),
-          type
+          type: 'message',
+          userId: socket.user.id
         });
-
-        const populated = await saved.populate('userId', 'name email role');
-
-        io.to(debateId).emit('newArgument', populated);
       } catch (_error) {
-        socket.emit('errorMessage', { message: 'Failed to send argument' });
+        socket.emit('errorMessage', { message: 'Failed to send message' });
       }
+    };
+
+    socket.on('sendMessage', handleSendMessage);
+    socket.on('sendArgument', handleSendMessage);
+
+    socket.on('raiseHand', async (payload) => {
+      const { debateId, note } = payload || {};
+      if (!mongoose.Types.ObjectId.isValid(debateId)) {
+        socket.emit('errorMessage', { message: 'Invalid debate ID for hand raise' });
+        return;
+      }
+
+      io.to(debateId).emit('handRaised', {
+        debateId,
+        userId: socket.user.id,
+        role: (await User.findById(socket.user.id).select('role'))?.role || socket.user.role || 'student',
+        note: note || 'Audience hand raise',
+        createdAt: new Date().toISOString()
+      });
     });
   });
 };

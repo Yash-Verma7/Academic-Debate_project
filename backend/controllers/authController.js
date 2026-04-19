@@ -1,32 +1,88 @@
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { normalizeWhitespace, splitFullName, composeFullName } = require('../utils/nameUtils');
+const { sendPasswordResetEmail } = require('../utils/mailer');
 
 const signToken = (user) =>
   jwt.sign({ id: user._id, role: user.role, email: user.email }, process.env.JWT_SECRET, {
     expiresIn: '1d'
   });
 
+const resolveClientURL = () => {
+  const explicit = normalizeWhitespace(process.env.CLIENT_URL);
+  if (explicit) return explicit;
+
+  const fromList = normalizeWhitespace(process.env.CLIENT_URLS || '')
+    .split(',')
+    .map((entry) => normalizeWhitespace(entry))
+    .find(Boolean);
+
+  return fromList || 'http://localhost:5173';
+};
+
+const normalizeRole = (role) => {
+  if (role === 'moderator') return 'moderator';
+  if (role === 'other') return 'other';
+  if (role === 'professional') return 'professional';
+  return 'student';
+};
+
 const register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, firstName, middleName, lastName, email, password, role, profileImage, avatarUrl } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: 'Name, email and password are required' });
+    if ((!name && !firstName) || !email || !password) {
+      return res.status(400).json({ message: 'Name (or first name), email and password are required' });
     }
 
-    const existingUser = await User.findOne({ email });
+    const normalizedEmail = normalizeWhitespace(email).toLowerCase();
+    const normalizedInputName = normalizeWhitespace(name);
+    const hasSeparateNameFields = [firstName, middleName, lastName]
+      .some((value) => normalizeWhitespace(value).length > 0);
+
+    let resolvedParts = hasSeparateNameFields
+      ? {
+          firstName: normalizeWhitespace(firstName),
+          middleName: normalizeWhitespace(middleName),
+          lastName: normalizeWhitespace(lastName)
+        }
+      : splitFullName(normalizedInputName);
+
+    if (!resolvedParts.firstName && normalizedInputName) {
+      const parsedFromName = splitFullName(normalizedInputName);
+      resolvedParts = {
+        firstName: resolvedParts.firstName || parsedFromName.firstName,
+        middleName: resolvedParts.middleName || parsedFromName.middleName,
+        lastName: resolvedParts.lastName || parsedFromName.lastName
+      };
+    }
+
+    if (!resolvedParts.firstName) {
+      return res.status(400).json({ message: 'First name is required' });
+    }
+
+    const canonicalName = composeFullName(resolvedParts) || normalizedInputName;
+
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(409).json({ message: 'Email already registered' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const normalizedRole = normalizeRole(role);
 
     const user = await User.create({
-      name,
-      email,
+      name: canonicalName,
+      firstName: resolvedParts.firstName,
+      middleName: resolvedParts.middleName,
+      lastName: resolvedParts.lastName,
+      email: normalizedEmail,
+      profileImage: normalizeWhitespace(profileImage || avatarUrl),
+      avatarUrl: normalizeWhitespace(profileImage || avatarUrl),
       password: hashedPassword,
-      role: role === 'moderator' ? 'moderator' : 'student'
+      role: normalizedRole
     });
 
     const token = signToken(user);
@@ -34,7 +90,15 @@ const register = async (req, res) => {
     return res.status(201).json({
       message: 'User registered successfully',
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role }
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        points: user.points,
+        profileImage: user.profileImage || user.avatarUrl || '',
+        avatarUrl: user.avatarUrl || user.profileImage || ''
+      }
     });
   } catch (error) {
     return res.status(500).json({ message: 'Registration failed', error: error.message });
@@ -49,7 +113,7 @@ const login = async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required' });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizeWhitespace(email).toLowerCase() });
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -64,11 +128,96 @@ const login = async (req, res) => {
     return res.status(200).json({
       message: 'Login successful',
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role }
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        points: user.points,
+        profileImage: user.profileImage || user.avatarUrl || '',
+        avatarUrl: user.avatarUrl || user.profileImage || ''
+      }
     });
   } catch (error) {
     return res.status(500).json({ message: 'Login failed', error: error.message });
   }
 };
 
-module.exports = { register, login };
+const forgotPassword = async (req, res) => {
+  try {
+    const normalizedEmail = normalizeWhitespace(req.body?.email).toLowerCase();
+
+    if (!normalizedEmail) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (user) {
+      const rawResetToken = crypto.randomBytes(32).toString('hex');
+      const hashedResetToken = crypto.createHash('sha256').update(rawResetToken).digest('hex');
+
+      user.passwordResetToken = hashedResetToken;
+      user.passwordResetExpiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      await user.save();
+
+      const clientURL = resolveClientURL();
+      const resetLink = `${clientURL}/reset-password/${rawResetToken}`;
+
+      await sendPasswordResetEmail({
+        to: user.email,
+        resetLink,
+        name: user.firstName || user.name || 'User'
+      });
+    }
+
+    return res.status(200).json({ message: 'Reset link sent to your email' });
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to process forgot password request', error: error.message });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { password, confirmPassword } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ message: 'Reset token is required' });
+    }
+
+    if (!password || !confirmPassword) {
+      return res.status(400).json({ message: 'Password and confirm password are required' });
+    }
+
+    if (String(password).length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: 'Passwords do not match' });
+    }
+
+    const hashedResetToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    const user = await User.findOne({
+      passwordResetToken: hashedResetToken,
+      passwordResetExpiresAt: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired reset token' });
+    }
+
+    user.password = await bcrypt.hash(password, 10);
+    user.passwordResetToken = '';
+    user.passwordResetExpiresAt = null;
+    await user.save();
+
+    return res.status(200).json({ message: 'Password reset successful' });
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to reset password', error: error.message });
+  }
+};
+
+module.exports = { register, login, forgotPassword, resetPassword };

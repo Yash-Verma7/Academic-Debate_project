@@ -22,4 +22,32 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const message = String(error?.response?.data?.message || '').toLowerCase();
+    const isAuthFailure =
+      status === 401 || (status === 404 && message.includes('user not found'));
+
+    if (isAuthFailure) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+
+      const currentPath = window.location.pathname;
+      const isPublicAuthRoute =
+        currentPath.startsWith('/login') ||
+        currentPath.startsWith('/signup') ||
+        currentPath.startsWith('/forgot-password') ||
+        currentPath.startsWith('/reset-password');
+
+      if (!isPublicAuthRoute) {
+        window.location.replace('/login?session=expired');
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
 export default api;
