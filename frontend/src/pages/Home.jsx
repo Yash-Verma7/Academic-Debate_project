@@ -11,6 +11,39 @@ const composeDisplayName = (user) => {
   return parts || user.name || 'User';
 };
 
+const areTrendingDebatesEquivalent = (previous, next) => {
+  if (!Array.isArray(previous) || !Array.isArray(next)) return false;
+  if (previous.length !== next.length) return false;
+
+  return previous.every((item, index) => {
+    const nextItem = next[index];
+    if (!nextItem) return false;
+
+    const previousProId = item?.participants?.proUser?._id || item?.proUser?._id || item?.proUser || null;
+    const previousConId = item?.participants?.conUser?._id || item?.conUser?._id || item?.conUser || null;
+    const nextProId = nextItem?.participants?.proUser?._id || nextItem?.proUser?._id || nextItem?.proUser || null;
+    const nextConId = nextItem?.participants?.conUser?._id || nextItem?.conUser?._id || nextItem?.conUser || null;
+
+    return (
+      item?._id === nextItem?._id &&
+      item?.status === nextItem?.status &&
+      item?.watchersCount === nextItem?.watchersCount &&
+      item?.startTime === nextItem?.startTime &&
+      item?.scheduledTime === nextItem?.scheduledTime &&
+      item?.endTime === nextItem?.endTime &&
+      String(previousProId || '') === String(nextProId || '') &&
+      String(previousConId || '') === String(nextConId || '')
+    );
+  });
+};
+
+const areStatsEqual = (previous, next) => (
+  previous?.activeDebatersCount === next?.activeDebatersCount &&
+  previous?.liveRoomsCount === next?.liveRoomsCount &&
+  previous?.upcomingRoomsCount === next?.upcomingRoomsCount &&
+  previous?.completedRoomsCount === next?.completedRoomsCount
+);
+
 function Home() {
   const [trendingDebates, setTrendingDebates] = useState([]);
   const [recentlyViewed, setRecentlyViewed] = useState([]);
@@ -63,14 +96,16 @@ function Home() {
         
         // Load feed
         const { data } = await api.get('/api/debates/home-feed');
-        setTrendingDebates(data.trendingDebates || []);
+        const nextTrendingDebates = data.trendingDebates || [];
+        setTrendingDebates((prev) => (areTrendingDebatesEquivalent(prev, nextTrendingDebates) ? prev : nextTrendingDebates));
 
-        setDashStats({
+        const nextStats = {
           activeDebatersCount: data.activeDebatersCount || 0,
           liveRoomsCount: data.liveRoomsCount || 0,
           upcomingRoomsCount: data.upcomingRoomsCount || 0,
           completedRoomsCount: data.completedRoomsCount || 0
-        });
+        };
+        setDashStats((prev) => (areStatsEqual(prev, nextStats) ? prev : nextStats));
 
         // Load leaderboard
         const leaderData = await api.get('/api/leaderboard', { params: { limit: 5 } });
@@ -96,13 +131,17 @@ function Home() {
 
     const refreshOnCreate = async () => {
       const { data } = await api.get('/api/debates/home-feed');
-      setTrendingDebates(data.trendingDebates || []);
-      setDashStats({
+
+      const nextTrendingDebates = data.trendingDebates || [];
+      setTrendingDebates((prev) => (areTrendingDebatesEquivalent(prev, nextTrendingDebates) ? prev : nextTrendingDebates));
+
+      const nextStats = {
         activeDebatersCount: data.activeDebatersCount || 0,
         liveRoomsCount: data.liveRoomsCount || 0,
         upcomingRoomsCount: data.upcomingRoomsCount || 0,
         completedRoomsCount: data.completedRoomsCount || 0
-      });
+      };
+      setDashStats((prev) => (areStatsEqual(prev, nextStats) ? prev : nextStats));
     };
 
     const onDebateCreated = () => {
@@ -292,7 +331,7 @@ function Home() {
             ) : (
               <div className="recently-viewed-track no-scrollbar">
                 {recentlyViewed.map((debate) => (
-                  <Link key={`recent-${debate._id}`} to={`/debates/${debate._id}`} className="recently-viewed-card">
+                  <Link key={`recent-${debate._id}`} to={`/debate/${debate._id}`} className="recently-viewed-card">
                     <div className="recently-viewed-meta">
                       <span className={`recent-status recent-status-${debate.status || 'upcoming'}`}>
                         {(debate.status || 'upcoming').toUpperCase()}

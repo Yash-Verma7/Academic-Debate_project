@@ -17,6 +17,62 @@ const TYPE_OPTIONS = [
   { value: 'question', label: 'Question' }
 ];
 
+const getParticipantId = (debate, side) => {
+  const sideKey = side === 'pro' ? 'proUser' : 'conUser';
+  const nested = debate?.participants?.[sideKey];
+  const topLevel = debate?.[sideKey];
+  const nestedId = typeof nested === 'string' ? nested : nested?._id;
+  const topLevelId = typeof topLevel === 'string' ? topLevel : topLevel?._id;
+  return nestedId || topLevelId || null;
+};
+
+const areDebatesEquivalent = (previous, next) => {
+  if (!previous || !next) return false;
+
+  return (
+    previous._id === next._id &&
+    previous.title === next.title &&
+    previous.topic === next.topic &&
+    previous.description === next.description &&
+    previous.category === next.category &&
+    previous.status === next.status &&
+    previous.startTime === next.startTime &&
+    previous.scheduledTime === next.scheduledTime &&
+    previous.endTime === next.endTime &&
+    previous.watchersCount === next.watchersCount &&
+    previous.proVotes === next.proVotes &&
+    previous.conVotes === next.conVotes &&
+    previous.currentUserVote === next.currentUserVote &&
+    String(getParticipantId(previous, 'pro') || '') === String(getParticipantId(next, 'pro') || '') &&
+    String(getParticipantId(previous, 'con') || '') === String(getParticipantId(next, 'con') || '')
+  );
+};
+
+const areVoteSummariesEqual = (previous, next) => {
+  if (!previous || !next) return false;
+  return JSON.stringify(previous) === JSON.stringify(next);
+};
+
+const areMessageGroupsEquivalent = (previous, next) => {
+  const roles = ['pro', 'con', 'audience'];
+
+  return roles.every((role) => {
+    const previousList = Array.isArray(previous?.[role]) ? previous[role] : [];
+    const nextList = Array.isArray(next?.[role]) ? next[role] : [];
+
+    if (previousList.length !== nextList.length) return false;
+
+    return previousList.every((message, index) => {
+      const nextMessage = nextList[index];
+      return (
+        message?._id === nextMessage?._id &&
+        message?.content === nextMessage?.content &&
+        message?.updatedAt === nextMessage?.updatedAt
+      );
+    });
+  });
+};
+
 function DebateRoom() {
   const { debateId } = useParams();
   const [debate, setDebate] = useState(null);
@@ -59,71 +115,88 @@ function DebateRoom() {
 
   const loadMessages = useCallback(async () => {
     const { data } = await api.get(`/api/messages/${debateId}/grouped`);
-    setChannelMessages({
+    const nextMessageGroups = {
       pro: data?.pro || [],
       con: data?.con || [],
       audience: data?.audience || []
-    });
+    };
+
+    setChannelMessages((prev) => (areMessageGroupsEquivalent(prev, nextMessageGroups) ? prev : nextMessageGroups));
   }, [debateId]);
 
-  const loadDebate = useCallback(async () => {
+  const loadDebate = useCallback(async ({ silent = false, includeMessages = false } = {}) => {
     try {
-      setLoading(true);
-      setError('');
+      if (!silent) {
+        setLoading(true);
+        setError('');
+      }
 
       const { data } = await api.get(`/api/debates/${debateId}`);
-      setDebate(data);
+
+      setDebate((prev) => {
+        if (!prev) return data;
+        return areDebatesEquivalent(prev, data) ? prev : data;
+      });
+
       if (data.voteSummary) {
-        setVoteSummary(data.voteSummary);
+        setVoteSummary((prev) => (areVoteSummariesEqual(prev, data.voteSummary) ? prev : data.voteSummary));
       }
 
-      const viewedDebate = {
-        _id: data._id,
-        title: data.title,
-        topic: data.topic,
-        category: data.category,
-        scheduledTime: data.scheduledTime,
-        startTime: data.startTime,
-        endTime: data.endTime,
-        status: data.status,
-        watchersCount: data.watchersCount,
-        createdBy: data.createdBy
-          ? {
-              _id: data.createdBy._id,
-              name: data.createdBy.name,
-              profileImage: data.createdBy.profileImage,
-              avatarUrl: data.createdBy.avatarUrl
-            }
-          : null,
-        createdAt: data.createdAt
-      };
+      if (!silent) {
+        const viewedDebate = {
+          _id: data._id,
+          title: data.title,
+          topic: data.topic,
+          category: data.category,
+          scheduledTime: data.scheduledTime,
+          startTime: data.startTime,
+          endTime: data.endTime,
+          status: data.status,
+          watchersCount: data.watchersCount,
+          createdBy: data.createdBy
+            ? {
+                _id: data.createdBy._id,
+                name: data.createdBy.name,
+                profileImage: data.createdBy.profileImage,
+                avatarUrl: data.createdBy.avatarUrl
+              }
+            : null,
+          createdAt: data.createdAt
+        };
 
-      const viewedList = JSON.parse(localStorage.getItem('recentlyViewedDebates') || '[]');
-      const updatedViewed = [viewedDebate, ...viewedList.filter((item) => item._id !== data._id)].slice(0, 5);
-      localStorage.setItem('recentlyViewedDebates', JSON.stringify(updatedViewed));
+        const viewedList = JSON.parse(localStorage.getItem('recentlyViewedDebates') || '[]');
+        const updatedViewed = [viewedDebate, ...viewedList.filter((item) => item._id !== data._id)].slice(0, 5);
+        localStorage.setItem('recentlyViewedDebates', JSON.stringify(updatedViewed));
 
-      const watchKey = `debate_watch_${user.id}_${debateId}`;
-      const hasWatched = localStorage.getItem(watchKey) === '1';
-      if (!hasWatched) {
-        await api.post(`/api/debates/${debateId}/watch`);
-        localStorage.setItem(watchKey, '1');
+        const watchKey = `debate_watch_${user.id}_${debateId}`;
+        const hasWatched = localStorage.getItem(watchKey) === '1';
+        if (!hasWatched) {
+          await api.post(`/api/debates/${debateId}/watch`);
+          localStorage.setItem(watchKey, '1');
+        }
       }
 
-      await loadMessages();
+      if (includeMessages) {
+        await loadMessages();
+      }
     } catch (apiError) {
-      setError(apiError.response?.data?.message || 'Failed to load debate room');
+      if (!silent) {
+        setError(apiError.response?.data?.message || 'Failed to load debate room');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [debateId, loadMessages, user.id]);
 
   useEffect(() => {
-    loadDebate();
+    loadDebate({ includeMessages: true });
   }, [loadDebate]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
-      loadDebate().catch(() => {});
+      loadDebate({ silent: true }).catch(() => {});
     }, 15000);
 
     return () => clearInterval(intervalId);
@@ -219,12 +292,27 @@ function DebateRoom() {
 
     const onDebateStatusChanged = (payload) => {
       if (payload?.debateId !== debateId) return;
-      setDebate((prev) => (prev ? { ...prev, status: payload.status } : prev));
+      setDebate((prev) => {
+        if (!prev || prev.status === payload.status) return prev;
+        return { ...prev, status: payload.status };
+      });
     };
 
     const onUserJoinedRole = (payload) => {
       if (payload?.debateId !== debateId || !payload?.participants) return;
-      setDebate((prev) => (prev ? { ...prev, participants: payload.participants } : prev));
+      setDebate((prev) => {
+        if (!prev) return prev;
+        const prevProId = String(getParticipantId(prev, 'pro') || '');
+        const prevConId = String(getParticipantId(prev, 'con') || '');
+        const nextProId = String(payload?.participants?.proUser?._id || payload?.participants?.proUser || '');
+        const nextConId = String(payload?.participants?.conUser?._id || payload?.participants?.conUser || '');
+
+        if (prevProId === nextProId && prevConId === nextConId) {
+          return prev;
+        }
+
+        return { ...prev, participants: payload.participants };
+      });
     };
 
     const onSocketError = (payload) => {

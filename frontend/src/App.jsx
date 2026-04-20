@@ -6,6 +6,7 @@ import ResetPassword from './pages/ResetPassword';
 import Home from './pages/Home';
 import DebateList from './pages/DebateList';
 import DebateRoom from './pages/DebateRoom';
+import DebateDetails from './pages/DebateDetails';
 import CreateDebate from './pages/CreateDebate';
 import Leaderboard from './pages/Leaderboard';
 import Profile from './pages/Profile';
@@ -60,6 +61,14 @@ function App() {
             <ModeratorRoute>
               <CreateDebate />
             </ModeratorRoute>
+          }
+        />
+        <Route
+          path="/debate/:id"
+          element={
+            <ProtectedRoute>
+              <DebateDetails />
+            </ProtectedRoute>
           }
         />
         <Route

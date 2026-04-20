@@ -7,6 +7,32 @@ import socket from '../services/socket';
 
 const categories = ['All Categories', 'Technology', 'Science', 'Politics', 'Education', 'Environment'];
 
+const areDebatesEquivalent = (previous, next) => {
+  if (!Array.isArray(previous) || !Array.isArray(next)) return false;
+  if (previous.length !== next.length) return false;
+
+  return previous.every((item, index) => {
+    const nextItem = next[index];
+    if (!nextItem) return false;
+
+    const previousProId = item?.participants?.proUser?._id || item?.proUser?._id || item?.proUser || null;
+    const previousConId = item?.participants?.conUser?._id || item?.conUser?._id || item?.conUser || null;
+    const nextProId = nextItem?.participants?.proUser?._id || nextItem?.proUser?._id || nextItem?.proUser || null;
+    const nextConId = nextItem?.participants?.conUser?._id || nextItem?.conUser?._id || nextItem?.conUser || null;
+
+    return (
+      item?._id === nextItem?._id &&
+      item?.status === nextItem?.status &&
+      item?.watchersCount === nextItem?.watchersCount &&
+      item?.startTime === nextItem?.startTime &&
+      item?.scheduledTime === nextItem?.scheduledTime &&
+      item?.endTime === nextItem?.endTime &&
+      String(previousProId || '') === String(nextProId || '') &&
+      String(previousConId || '') === String(nextConId || '')
+    );
+  });
+};
+
 function DebateList() {
   const [searchParams] = useSearchParams();
   const initialStatus = searchParams.get('status') || 'all';
@@ -17,20 +43,27 @@ function DebateList() {
   const [selectedCategory, setSelectedCategory] = useState('All Categories');
   const [selectedStatus, setSelectedStatus] = useState(initialStatus);
   const [sortBy, setSortBy] = useState('recent');
-  const [expandedCard, setExpandedCard] = useState('');
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const canCreateDebate = currentUser?.role === 'moderator';
 
-  const loadDebates = async () => {
+  const loadDebates = async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
-      setError('');
+      if (!silent) {
+        setLoading(true);
+        setError('');
+      }
+
       const { data } = await api.get('/api/debates');
-      setDebates(data);
+
+      setDebates((prev) => (areDebatesEquivalent(prev, data) ? prev : data));
     } catch (apiError) {
-      setError(apiError.response?.data?.message || 'Failed to load debates');
+      if (!silent) {
+        setError(apiError.response?.data?.message || 'Failed to load debates');
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -53,7 +86,7 @@ function DebateList() {
     }
 
     const onDebateCreated = () => {
-      loadDebates().catch(() => {});
+      loadDebates({ silent: true }).catch(() => {});
     };
 
     const onDebateUpdated = (payload) => {
@@ -181,12 +214,7 @@ function DebateList() {
 
           <div className="debate-card-grid" style={{ marginTop: 12 }}>
             {filteredDebates.map((debate) => (
-              <DebateCard
-                key={debate._id}
-                debate={debate}
-                detailOpen={expandedCard === debate._id}
-                onViewDetails={() => setExpandedCard((prev) => (prev === debate._id ? '' : debate._id))}
-              />
+              <DebateCard key={debate._id} debate={debate} />
             ))}
           </div>
         </div>

@@ -10,6 +10,7 @@ const userRoutes = require('./routes/userRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const authMiddleware = require('./middlewares/authMiddleware');
 const { getLeaderboard } = require('./controllers/userController');
+const { getDebateById } = require('./controllers/debateController');
 const registerDebateSocket = require('./sockets/debateSocket');
 const startCronJobs = require('./jobs/debateCron');
 
@@ -53,6 +54,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/debates', debateRoutes);
+app.get('/api/debate/:id', authMiddleware, getDebateById);
 app.use('/api/users', userRoutes);
 app.use('/api/messages', messageRoutes);
 app.get('/api/leaderboard', authMiddleware, getLeaderboard);

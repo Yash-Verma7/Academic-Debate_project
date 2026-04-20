@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
-import { Bell } from 'lucide-react';
+import { Bell, Menu, X } from 'lucide-react';
 import api from '../services/api';
 import socket from '../services/socket';
 import UserAvatar from './UserAvatar';
@@ -35,6 +35,7 @@ function TopNav() {
   const [loadingLatest, setLoadingLatest] = useState(false);
   const [dropdownError, setDropdownError] = useState('');
   const [hasUnread, setHasUnread] = useState(localStorage.getItem('hasUnreadNotifications') === '1');
+  const [menuOpen, setMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(
     localStorage.getItem('hasUnreadNotifications') === '1' ? Math.min(storedNotifications.length, 9) : 0
   );
@@ -109,6 +110,20 @@ function TopNav() {
     };
   }, []);
 
+  useEffect(() => {
+    const closeMobileMenuOnResize = () => {
+      if (window.innerWidth >= 768) {
+        setMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('resize', closeMobileMenuOnResize);
+
+    return () => {
+      window.removeEventListener('resize', closeMobileMenuOnResize);
+    };
+  }, []);
+
   const markAllNotifications = () => {
     localStorage.setItem('hasUnreadNotifications', '0');
     setHasUnread(false);
@@ -128,19 +143,29 @@ function TopNav() {
   return (
     <nav className="top-nav">
       <div className="top-nav-inner">
-        <div className="nav-left brand">
+        <Link to="/home" className="nav-left brand" onClick={() => setMenuOpen(false)}>
           <div className="brand-logo">🛡️</div>
           <span>Academic Debate</span>
-        </div>
+        </Link>
 
-        <div className="nav-center nav-links">
-          <NavLink to="/home" end className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+        <button
+          type="button"
+          className="nav-mobile-toggle"
+          onClick={() => setMenuOpen((prev) => !prev)}
+          aria-label={menuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? <X size={20} /> : <Menu size={20} />}
+        </button>
+
+        <div className={`nav-center nav-links ${menuOpen ? 'mobile-open' : ''}`}>
+          <NavLink to="/home" end className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} onClick={() => setMenuOpen(false)}>
             Home
           </NavLink>
-          <NavLink to="/debate-rooms" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          <NavLink to="/debate-rooms" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} onClick={() => setMenuOpen(false)}>
             Debate Rooms
           </NavLink>
-          <NavLink to="/leaderboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          <NavLink to="/leaderboard" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} onClick={() => setMenuOpen(false)}>
             Leaderboard
           </NavLink>
         </div>
@@ -176,7 +201,7 @@ function TopNav() {
                   {!loadingLatest && !dropdownError && latestDebates.map((debate) => (
                     <Link
                       key={debate.debateId}
-                      to={`/debates/${debate.debateId}`}
+                      to={`/debate/${debate.debateId}`}
                       className="notification-item"
                       onClick={() => setShowDropdown(false)}
                     >

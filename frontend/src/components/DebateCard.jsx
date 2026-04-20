@@ -17,7 +17,7 @@ const formatName = (name, fallback) => {
   return name;
 };
 
-function DebateCard({ debate, onViewDetails, detailOpen = false, compact = false }) {
+function DebateCard({ debate, compact = false }) {
   const status = debate.status || 'upcoming';
   const moderatorName = formatName(debate.createdBy?.name, 'Moderator');
   const proName = formatName(
@@ -33,8 +33,6 @@ function DebateCard({ debate, onViewDetails, detailOpen = false, compact = false
 
   const badgeClass =
     status === 'live' ? 'badge-live' : status === 'completed' ? 'badge-completed' : 'badge-upcoming';
-
-  const hasDetailToggle = typeof onViewDetails === 'function';
 
   return (
     <article className={`home-debate-card debate-room-home-card ${compact ? 'compact' : ''}`}>
@@ -69,24 +67,10 @@ function DebateCard({ debate, onViewDetails, detailOpen = false, compact = false
         </div>
       </div>
 
-      {hasDetailToggle && detailOpen && (
-        <div className="details-block">
-          <p className="subtle" style={{ margin: 0 }}>
-            {debate.description || debate.topic || 'No additional description yet.'}
-          </p>
-        </div>
-      )}
-
       <div className="home-card-actions debate-room-actions">
-        {hasDetailToggle ? (
-          <button type="button" className="btn-white-outline" onClick={onViewDetails}>
-            {detailOpen ? 'Hide Details' : 'View Details'}
-          </button>
-        ) : (
-          <Link to={`/debates/${debate._id}`} className="btn-white-outline">
-            View Details
-          </Link>
-        )}
+        <Link to={`/debate/${debate._id}`} className="btn-white-outline">
+          View Details
+        </Link>
         <Link to={`/debates/${debate._id}`} className="btn-blue-fill">
           Join Debate
         </Link>
