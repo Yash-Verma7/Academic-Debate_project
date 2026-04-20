@@ -32,6 +32,57 @@ const debatePopulation = [
 
 const ALLOWED_CATEGORIES = ['Technology', 'Science', 'Politics', 'Education', 'Environment', 'Others'];
 
+const toUtcISOString = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+};
+
+const toUtcDate = (value) => {
+  const iso = toUtcISOString(value);
+  return iso ? new Date(iso) : null;
+};
+
+const serializeDebate = (debate) => {
+  if (!debate) return debate;
+
+  const payload = typeof debate.toObject === 'function' ? debate.toObject() : { ...debate };
+  const proUser = payload?.participants?.proUser || payload?.proUser || null;
+  const conUser = payload?.participants?.conUser || payload?.conUser || null;
+
+  return {
+    ...payload,
+    startTime: toUtcISOString(payload.startTime),
+    scheduledTime: toUtcISOString(payload.scheduledTime),
+    endTime: toUtcISOString(payload.endTime),
+    proUser,
+    conUser,
+    participants: {
+      ...(payload.participants || {}),
+      proUser,
+      conUser
+    }
+  };
+};
+
+const buildDebateRealtimePayload = (debate) => {
+  const serialized = serializeDebate(debate);
+  if (!serialized) return null;
+
+  return {
+    debateId: serialized._id?.toString(),
+    status: serialized.status,
+    startTime: serialized.startTime,
+    endTime: serialized.endTime,
+    scheduledTime: serialized.scheduledTime,
+    watchersCount: serialized.watchersCount,
+    proVotes: serialized.proVotes,
+    conVotes: serialized.conVotes,
+    participants: serialized.participants
+  };
+};
+
 const getDebates = async (_req, res) => {
   try {
     const debates = await Debate.find()
@@ -40,7 +91,7 @@ const getDebates = async (_req, res) => {
       .populate('participants.conUser', 'name firstName middleName lastName email role profileImage avatarUrl')
       .sort({ createdAt: -1 });
 
-    return res.status(200).json(debates);
+    return res.status(200).json(debates.map(serializeDebate));
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch debates', error: error.message });
   }
@@ -55,7 +106,7 @@ const getLatestDebates = async (_req, res) => {
       .sort({ createdAt: -1 })
       .limit(8);
 
-    return res.status(200).json(latestDebates);
+    return res.status(200).json(latestDebates.map(serializeDebate));
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch latest debates', error: error.message });
   }
@@ -65,9 +116,17 @@ const getHomeFeed = async (_req, res) => {
   try {
     const categories = ALLOWED_CATEGORIES;
 
-    const pros = await Debate.distinct('participants.proUser');
-    const cons = await Debate.distinct('participants.conUser');
-    const activeDebatersCount = new Set([...pros, ...cons].filter(Boolean).map((id) => id.toString())).size;
+    const [nestedPros, nestedCons, topLevelPros, topLevelCons] = await Promise.all([
+      Debate.distinct('participants.proUser'),
+      Debate.distinct('participants.conUser'),
+      Debate.distinct('proUser'),
+      Debate.distinct('conUser')
+    ]);
+    const activeDebatersCount = new Set(
+      [...nestedPros, ...nestedCons, ...topLevelPros, ...topLevelCons]
+        .filter(Boolean)
+        .map((id) => id.toString())
+    ).size;
 
     const [
       recentDebates,
@@ -103,13 +162,13 @@ const getHomeFeed = async (_req, res) => {
     ]);
 
     const categoryDebates = categories.reduce((accumulator, category, index) => {
-      accumulator[category] = categoryDebateArrays[index] || [];
+      accumulator[category] = (categoryDebateArrays[index] || []).map(serializeDebate);
       return accumulator;
     }, {});
 
     return res.status(200).json({
-      recentDebates,
-      trendingDebates,
+      recentDebates: recentDebates.map(serializeDebate),
+      trendingDebates: trendingDebates.map(serializeDebate),
       categoryDebates,
       activeDebatersCount,
       liveRoomsCount,
@@ -158,7 +217,7 @@ const getDebateById = async (req, res) => {
     const currentUserVote = debate.votes?.find((vote) => vote.userId?.toString() === req.user.id)?.side || null;
     const voteSummary = buildVoteSummary(debate);
 
-    return res.status(200).json({ ...debate.toObject(), arguments: argumentsList, currentUserVote, voteSummary });
+    return res.status(200).json({ ...serializeDebate(debate), arguments: argumentsList, currentUserVote, voteSummary });
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch debate', error: error.message });
   }
@@ -195,10 +254,10 @@ const createDebate = async (req, res) => {
       return res.status(400).json({ message: 'Start time and end time are required' });
     }
 
-    const startDate = new Date(normalizedStartTime);
-    const endDate = new Date(endTime);
+    const startDate = toUtcDate(normalizedStartTime);
+    const endDate = toUtcDate(endTime);
 
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    if (!startDate || !endDate) {
       return res.status(400).json({ message: 'Invalid start time or end time' });
     }
 
@@ -260,6 +319,8 @@ const createDebate = async (req, res) => {
       startTime: startDate,
       scheduledTime: startDate,
       endTime: endDate,
+      proUser: normalizedProUserId || null,
+      conUser: normalizedConUserId || null,
       participantLabels: {
         proLabel: proUser?.name || proParticipant || '',
         conLabel: conUser?.name || conParticipant || ''
@@ -275,19 +336,20 @@ const createDebate = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
+      const serializedDebate = serializeDebate(populatedDebate);
       io.emit('debateCreated', {
-        id: populatedDebate._id,
-        title: populatedDebate.title,
-        category: populatedDebate.category,
-        startTime: populatedDebate.startTime,
-        scheduledTime: populatedDebate.scheduledTime,
-        endTime: populatedDebate.endTime,
-        status: populatedDebate.status,
-        createdAt: populatedDebate.createdAt
+        id: serializedDebate._id,
+        title: serializedDebate.title,
+        category: serializedDebate.category,
+        startTime: serializedDebate.startTime,
+        scheduledTime: serializedDebate.scheduledTime,
+        endTime: serializedDebate.endTime,
+        status: serializedDebate.status,
+        createdAt: serializedDebate.createdAt
       });
     }
 
-    return res.status(201).json(populatedDebate);
+    return res.status(201).json(serializeDebate(populatedDebate));
   } catch (error) {
     return res.status(500).json({ message: 'Failed to create debate', error: error.message });
   }
@@ -296,14 +358,14 @@ const createDebate = async (req, res) => {
 const joinDebate = async (req, res) => {
   try {
     const { id } = req.params;
-    const { side } = req.body;
+    const requestedRole = String(req.body?.role || req.body?.side || '').toLowerCase();
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: 'Invalid debate ID' });
     }
 
-    if (!['pro', 'con'].includes(side)) {
-      return res.status(400).json({ message: 'Side must be either pro or con' });
+    if (!['pro', 'con'].includes(requestedRole)) {
+      return res.status(400).json({ message: 'Role must be either pro or con' });
     }
 
     const debate = await Debate.findById(id);
@@ -311,17 +373,15 @@ const joinDebate = async (req, res) => {
       return res.status(404).json({ message: 'Debate not found' });
     }
 
-    const latestUser = await User.findById(req.user.id).select('role');
-    const effectiveRole = latestUser?.role || req.user.role;
-    if (effectiveRole !== 'student') {
-      return res.status(403).json({ message: 'Only students can join Pro or Con' });
-    }
-
+    const side = requestedRole;
     const targetField = side === 'pro' ? 'proUser' : 'conUser';
     const oppositeField = side === 'pro' ? 'conUser' : 'proUser';
 
-    const joinedPro = debate.participants?.proUser?.toString() === req.user.id;
-    const joinedCon = debate.participants?.conUser?.toString() === req.user.id;
+    const existingProUser = debate.participants?.proUser || debate.proUser || null;
+    const existingConUser = debate.participants?.conUser || debate.conUser || null;
+
+    const joinedPro = existingProUser?.toString() === req.user.id;
+    const joinedCon = existingConUser?.toString() === req.user.id;
     const alreadyJoined = joinedPro || joinedCon;
 
     if (alreadyJoined) {
@@ -330,37 +390,53 @@ const joinDebate = async (req, res) => {
         const populatedDebate = await Debate.findById(id).populate(debatePopulation);
         return res.status(200).json({
           message: `You have already joined as ${joinedSide.toUpperCase()}`,
-          debate: populatedDebate
+          debate: serializeDebate(populatedDebate)
         });
       }
 
       return res.status(409).json({ message: 'You can only join one side' });
     }
 
-    if (debate.participants?.proUser && debate.participants?.conUser) {
+    if (existingProUser && existingConUser) {
       return res.status(409).json({ message: 'Pro and Con positions are filled. You can join live chat.' });
     }
 
-    if (debate.participants[targetField] && debate.participants[targetField].toString() !== req.user.id) {
+    if (debate.participants?.[targetField] && debate.participants[targetField].toString() !== req.user.id) {
       return res.status(409).json({ message: `The ${side.toUpperCase()} side is already occupied` });
     }
 
-    if (debate.participants[oppositeField] && debate.participants[oppositeField].toString() === req.user.id) {
+    if (debate.participants?.[oppositeField] && debate.participants[oppositeField].toString() === req.user.id) {
       return res.status(409).json({ message: 'You have already joined this debate on the opposite side' });
     }
 
     const query = {
       _id: id,
+      [targetField]: null,
       [`participants.${targetField}`]: null,
       $or: [
-        { [`participants.${oppositeField}`]: null },
-        { [`participants.${oppositeField}`]: { $ne: req.user.id } }
+        {
+          $and: [
+            { [oppositeField]: null },
+            { [`participants.${oppositeField}`]: null }
+          ]
+        },
+        {
+          $and: [
+            { [oppositeField]: { $ne: req.user.id } },
+            { [`participants.${oppositeField}`]: { $ne: req.user.id } }
+          ]
+        }
       ]
     };
 
     const updated = await Debate.findOneAndUpdate(
       query,
-      { $set: { [`participants.${targetField}`]: req.user.id } },
+      {
+        $set: {
+          [targetField]: req.user.id,
+          [`participants.${targetField}`]: req.user.id
+        }
+      },
       { new: true }
     );
 
@@ -370,11 +446,11 @@ const joinDebate = async (req, res) => {
         return res.status(404).json({ message: 'Debate not found' });
       }
 
-      if (refreshed.participants[targetField]) {
+      if (refreshed.participants?.[targetField] || refreshed[targetField]) {
         return res.status(409).json({ message: `The ${side.toUpperCase()} side is already occupied` });
       }
 
-      if (refreshed.participants[oppositeField]?.toString() === req.user.id) {
+      if (refreshed.participants?.[oppositeField]?.toString() === req.user.id || refreshed[oppositeField]?.toString() === req.user.id) {
         return res.status(409).json({ message: 'You have already joined this debate on the opposite side' });
       }
 
@@ -388,16 +464,14 @@ const joinDebate = async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       io.to(id).emit('debateUpdated', {
+        ...buildDebateRealtimePayload(updatedDebate),
+        voteSummary: buildVoteSummary(updatedDebate)
+      });
+      io.to(id).emit('userJoinedRole', {
         debateId: id,
-        status: updatedDebate.status,
-        startTime: updatedDebate.startTime,
-        endTime: updatedDebate.endTime,
-        scheduledTime: updatedDebate.scheduledTime,
-        watchersCount: updatedDebate.watchersCount,
-        proVotes: updatedDebate.proVotes,
-        conVotes: updatedDebate.conVotes,
-        voteSummary: buildVoteSummary(updatedDebate),
-        participants: updatedDebate.participants
+        role: side,
+        userId: req.user.id,
+        participants: serializeDebate(updatedDebate).participants
       });
       io.emit('debateActivity', {
         debateId: id,
@@ -407,7 +481,7 @@ const joinDebate = async (req, res) => {
       });
     }
 
-    return res.status(200).json({ message: 'Joined debate successfully', debate: updatedDebate });
+    return res.status(200).json({ message: 'Joined debate successfully', debate: serializeDebate(updatedDebate) });
   } catch (error) {
     return res.status(500).json({ message: 'Failed to join debate', error: error.message });
   }
@@ -442,14 +516,7 @@ const registerWatch = async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       io.to(id).emit('debateUpdated', {
-        debateId: id,
-        status: populatedDebate.status,
-        startTime: populatedDebate.startTime,
-        endTime: populatedDebate.endTime,
-        scheduledTime: populatedDebate.scheduledTime,
-        watchersCount: populatedDebate.watchersCount,
-        proVotes: populatedDebate.proVotes,
-        conVotes: populatedDebate.conVotes,
+        ...buildDebateRealtimePayload(populatedDebate),
         voteSummary: buildVoteSummary(populatedDebate)
       });
     }
@@ -457,7 +524,7 @@ const registerWatch = async (req, res) => {
     return res.status(200).json({
       message: alreadyWatching ? 'Watch already registered' : 'Watch registered',
       alreadyWatching,
-      debate: populatedDebate
+      debate: serializeDebate(populatedDebate)
     });
   } catch (error) {
     return res.status(500).json({ message: 'Failed to register watch', error: error.message });
@@ -536,14 +603,7 @@ const voteDebate = async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       io.to(id).emit('debateUpdated', {
-        debateId: id,
-        status: populatedDebate.status,
-        startTime: populatedDebate.startTime,
-        endTime: populatedDebate.endTime,
-        scheduledTime: populatedDebate.scheduledTime,
-        watchersCount: populatedDebate.watchersCount,
-        proVotes: populatedDebate.proVotes,
-        conVotes: populatedDebate.conVotes,
+        ...buildDebateRealtimePayload(populatedDebate),
         voteSummary: buildVoteSummary(populatedDebate)
       });
       io.emit('debateActivity', {
@@ -556,7 +616,7 @@ const voteDebate = async (req, res) => {
 
     return res.status(200).json({
       message,
-      debate: { ...populatedDebate.toObject(), currentUserVote, voteSummary: buildVoteSummary(populatedDebate) }
+      debate: { ...serializeDebate(populatedDebate), currentUserVote, voteSummary: buildVoteSummary(populatedDebate) }
     });
   } catch (error) {
     return res.status(500).json({ message: 'Failed to submit vote', error: error.message });

@@ -202,7 +202,9 @@ const createMessage = async (req, res) => {
       });
     }
 
-    const allowedUserId = normalizedChannel === 'pro' ? debate.participants?.proUser : debate.participants?.conUser;
+    const allowedUserId = normalizedChannel === 'pro'
+      ? (debate.participants?.proUser || debate.proUser)
+      : (debate.participants?.conUser || debate.conUser);
     if (!allowedUserId || allowedUserId.toString() !== req.user.id) {
       return res.status(403).json({ message: `Join debate as ${normalizedChannel.toUpperCase()} before posting` });
     }

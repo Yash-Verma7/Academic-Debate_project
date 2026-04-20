@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import TopNav from '../components/TopNav';
@@ -17,13 +17,12 @@ function Home() {
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [onlineParticipantsCount, setOnlineParticipantsCount] = useState(0);
   
   const [dashStats, setDashStats] = useState({ activeDebatersCount: 0, liveRoomsCount: 0, upcomingRoomsCount: 0, completedRoomsCount: 0 });
 
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [visibleDebateCount, setVisibleDebateCount] = useState(5);
-  const debateScrollRef = useRef(null);
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
   const canCreateDebate = currentUser?.role === 'moderator';
 
@@ -130,14 +129,22 @@ function Home() {
       refreshOnCreate().catch(() => {});
     };
 
+    const onOnlineParticipants = (payload) => {
+      const count = Number(payload?.count);
+      setOnlineParticipantsCount(Number.isFinite(count) && count >= 0 ? count : 0);
+    };
+
     socket.on('debateCreated', onDebateCreated);
     socket.on('debateUpdated', onDebateUpdated);
     socket.on('debateStatusChanged', onDebateStatusChanged);
+    socket.on('onlineParticipants', onOnlineParticipants);
+    socket.emit('getOnlineParticipants');
 
     return () => {
       socket.off('debateCreated', onDebateCreated);
       socket.off('debateUpdated', onDebateUpdated);
       socket.off('debateStatusChanged', onDebateStatusChanged);
+      socket.off('onlineParticipants', onOnlineParticipants);
     };
   }, []);
 
@@ -182,28 +189,9 @@ function Home() {
   }, [trendingDebates, searchQuery, activeCategory]);
 
   const visibleDebates = useMemo(
-    () => filteredDebates.slice(0, visibleDebateCount),
-    [filteredDebates, visibleDebateCount]
+    () => filteredDebates,
+    [filteredDebates]
   );
-
-  useEffect(() => {
-    setVisibleDebateCount(5);
-    if (debateScrollRef.current) {
-      debateScrollRef.current.scrollTop = 0;
-    }
-  }, [activeCategory, searchQuery]);
-
-  const handleDebateScroll = (event) => {
-    if (visibleDebateCount >= filteredDebates.length) return;
-
-    const container = event.currentTarget;
-    const scrolledToBottom =
-      container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
-
-    if (scrolledToBottom) {
-      setVisibleDebateCount((prev) => Math.min(prev + 5, filteredDebates.length));
-    }
-  };
 
   return (
     <div className="layout-app">
@@ -264,8 +252,8 @@ function Home() {
              <Link to="/debate-rooms" className="dashboard-stat-card blue" style={{textDecoration: 'none', cursor: 'pointer'}}>
                <div className="stat-icon">👥</div>
                <div className="stat-info">
-                 <span className="stat-val">{dashStats.activeDebatersCount}</span>
-                 <span className="stat-label">ACTIVE DEBATERS</span>
+                 <span className="stat-val">{onlineParticipantsCount}</span>
+                 <span className="stat-label">PARTICIPANTS</span>
                </div>
              </Link>
              <Link to="/debate-rooms?status=live" className="dashboard-stat-card green" style={{textDecoration: 'none', cursor: 'pointer'}}>
@@ -335,11 +323,7 @@ function Home() {
           
           {!loading && filteredDebates.length === 0 && <p className="subtle">No debates found.</p>}
 
-          <div
-            ref={debateScrollRef}
-            className="home-debate-scroll-container no-scrollbar"
-            onScroll={handleDebateScroll}
-          >
+          <div className="home-debate-scroll-container">
             <div className="debate-list home-debate-list">
               {visibleDebates.map((debate) => (
                 <DebateCard key={debate._id} debate={debate} />
@@ -372,13 +356,6 @@ function Home() {
                  </li>
                ))}
             </ul>
-          </div>
-          
-          <div className="tournament-card">
-              <div className="tourney-badge">🏆 TOURNAMENT</div>
-              <h4 className="tourney-title">National Debate Championship</h4>
-              <p className="tourney-desc">Registration ends in 3 days. Total prize pool $5,000.</p>
-              <button className="tourney-btn">Register Now</button>
           </div>
         </aside>
       </div>

@@ -99,9 +99,18 @@ npm run dev
 - `GET /api/debates/latest`
 - `POST /api/debates`
 - `GET /api/debates/:id`
-- `POST /api/debates/:id/join`
+- `POST /api/debates/:id/join` (`{ role: "pro" | "con" }` or `{ side: "pro" | "con" }`)
 - `POST /api/debates/:id/watch`
 - `POST /api/debates/:id/vote`
+
+## Real-Time Debate Rules
+
+- Debate start/end times are stored and returned as UTC ISO timestamps.
+- Frontend must send create times as UTC (e.g. `new Date(localValue).toISOString()`).
+- Each debate has one `pro` and one `con` slot; only one user can occupy each slot.
+- A user can join only one side in the same debate.
+- Only the joined `pro` user can post in Pro arguments; only the joined `con` user can post in Con arguments.
+- Any authenticated user can post in live audience chat.
 
 ### Messages (JWT Protected)
 - `GET /api/messages/:debateId`

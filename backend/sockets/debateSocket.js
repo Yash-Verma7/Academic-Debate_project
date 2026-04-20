@@ -7,6 +7,25 @@ const Argument = require('../models/Argument');
 
 const MESSAGE_ROLES = ['pro', 'con', 'audience'];
 const MESSAGE_TYPES = ['argument', 'rebuttal', 'question'];
+const onlineUserConnections = new Map();
+
+const getOnlineParticipantsCount = () => onlineUserConnections.size;
+
+const incrementOnlineUser = (userId) => {
+  const currentCount = onlineUserConnections.get(userId) || 0;
+  onlineUserConnections.set(userId, currentCount + 1);
+};
+
+const decrementOnlineUser = (userId) => {
+  const currentCount = onlineUserConnections.get(userId) || 0;
+
+  if (currentCount <= 1) {
+    onlineUserConnections.delete(userId);
+    return;
+  }
+
+  onlineUserConnections.set(userId, currentCount - 1);
+};
 
 const toArgumentPayload = (entry, fallbackUserRole) => ({
   _id: entry._id,
@@ -62,6 +81,19 @@ const registerDebateSocket = (io) => {
   });
 
   io.on('connection', (socket) => {
+    const userId = socket.user?.id ? String(socket.user.id) : null;
+
+    if (userId) {
+      socket.data.userId = userId;
+      incrementOnlineUser(userId);
+    }
+
+    io.emit('onlineParticipants', { count: getOnlineParticipantsCount() });
+
+    socket.on('getOnlineParticipants', () => {
+      socket.emit('onlineParticipants', { count: getOnlineParticipantsCount() });
+    });
+
     socket.on('joinDebate', async (debateId) => {
       if (!mongoose.Types.ObjectId.isValid(debateId)) {
         socket.emit('errorMessage', { message: 'Invalid debate ID' });
@@ -133,7 +165,9 @@ const registerDebateSocket = (io) => {
 
           io.to(debateId).emit('newArgument', toAudiencePayload(populatedAudience, latestUser?.role || socket.user.role || 'student'));
         } else {
-          const allowedUserId = normalizedSide === 'pro' ? debate.participants?.proUser : debate.participants?.conUser;
+          const allowedUserId = normalizedSide === 'pro'
+            ? (debate.participants?.proUser || debate.proUser)
+            : (debate.participants?.conUser || debate.conUser);
           if (!allowedUserId || allowedUserId.toString() !== socket.user.id) {
             socket.emit('errorMessage', { message: `You must join as ${normalizedSide.toUpperCase()} before posting` });
             return;
@@ -195,6 +229,14 @@ const registerDebateSocket = (io) => {
         note: note || 'Audience hand raise',
         createdAt: new Date().toISOString()
       });
+    });
+
+    socket.on('disconnect', () => {
+      const disconnectedUserId = socket.data?.userId;
+      if (!disconnectedUserId) return;
+
+      decrementOnlineUser(disconnectedUserId);
+      io.emit('onlineParticipants', { count: getOnlineParticipantsCount() });
     });
   });
 };

@@ -18,6 +18,8 @@ const debateSchema = new mongoose.Schema(
     proVotes: { type: Number, default: 0, min: 0 },
     conVotes: { type: Number, default: 0, min: 0 },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    proUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    conUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     participants: {
       proUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
       conUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
@@ -37,5 +39,32 @@ const debateSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+debateSchema.pre('validate', function preValidate(next) {
+  if (this.participants?.proUser && !this.proUser) {
+    this.proUser = this.participants.proUser;
+  }
+  if (this.participants?.conUser && !this.conUser) {
+    this.conUser = this.participants.conUser;
+  }
+
+  if (this.proUser && !this.participants?.proUser) {
+    this.participants = {
+      ...(this.participants || {}),
+      proUser: this.proUser,
+      conUser: this.participants?.conUser || this.conUser || null
+    };
+  }
+
+  if (this.conUser && !this.participants?.conUser) {
+    this.participants = {
+      ...(this.participants || {}),
+      proUser: this.participants?.proUser || this.proUser || null,
+      conUser: this.conUser
+    };
+  }
+
+  next();
+});
 
 module.exports = mongoose.model('Debate', debateSchema);

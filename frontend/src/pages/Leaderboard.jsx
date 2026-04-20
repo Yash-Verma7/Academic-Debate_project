@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import TopNav from '../components/TopNav';
 import api from '../services/api';
 import UserAvatar from '../components/UserAvatar';
@@ -13,6 +13,51 @@ function Leaderboard() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [selectedLeaderIndex, setSelectedLeaderIndex] = useState(null);
+
+  const hasPreviewImage = (leader) => Boolean(leader?.profileImage || leader?.avatarUrl);
+
+  const selectedLeader = useMemo(() => {
+    if (selectedLeaderIndex === null) return null;
+    return leaders[selectedLeaderIndex] || null;
+  }, [leaders, selectedLeaderIndex]);
+
+  const selectedImage = selectedLeader?.profileImage || selectedLeader?.avatarUrl || '';
+
+  const closePreview = () => {
+    setSelectedLeaderIndex(null);
+  };
+
+  const openPreview = (index) => {
+    if (!hasPreviewImage(leaders[index])) return;
+    setSelectedLeaderIndex(index);
+  };
+
+  const findNextPreviewIndex = (startIndex, step) => {
+    if (!leaders.length) return null;
+    let index = startIndex;
+
+    for (let count = 0; count < leaders.length; count += 1) {
+      index = (index + step + leaders.length) % leaders.length;
+      if (hasPreviewImage(leaders[index])) {
+        return index;
+      }
+    }
+
+    return startIndex;
+  };
+
+  const goToNextPreview = () => {
+    if (selectedLeaderIndex === null) return;
+    const nextIndex = findNextPreviewIndex(selectedLeaderIndex, 1);
+    if (nextIndex !== null) setSelectedLeaderIndex(nextIndex);
+  };
+
+  const goToPreviousPreview = () => {
+    if (selectedLeaderIndex === null) return;
+    const previousIndex = findNextPreviewIndex(selectedLeaderIndex, -1);
+    if (previousIndex !== null) setSelectedLeaderIndex(previousIndex);
+  };
 
   useEffect(() => {
     const fetchLeaderboard = async () => {
@@ -34,6 +79,36 @@ function Leaderboard() {
 
     fetchLeaderboard();
   }, [search]);
+
+  useEffect(() => {
+    if (selectedLeaderIndex === null) return undefined;
+
+    const handleEsc = (event) => {
+      if (event.key === 'Escape') {
+        closePreview();
+      }
+      if (event.key === 'ArrowRight') {
+        goToNextPreview();
+      }
+      if (event.key === 'ArrowLeft') {
+        goToPreviousPreview();
+      }
+    };
+
+    window.addEventListener('keydown', handleEsc);
+
+    return () => {
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, [selectedLeaderIndex, leaders]);
+
+  useEffect(() => {
+    if (selectedLeaderIndex === null) return;
+
+    if (!leaders[selectedLeaderIndex] || !hasPreviewImage(leaders[selectedLeaderIndex])) {
+      closePreview();
+    }
+  }, [leaders, selectedLeaderIndex]);
 
   return (
     <div className="leaderboard-page-modern">
@@ -78,12 +153,20 @@ function Leaderboard() {
                   >
                     <div className={`leaderboard-rank-pill ${isTopRank ? 'rank-one' : ''}`}>#{index + 1}</div>
 
-                    <UserAvatar
-                      src={leader.profileImage || leader.avatarUrl}
-                      name={displayName}
-                      size="md"
-                      className="leaderboard-avatar-modern"
-                    />
+                    <button
+                      type="button"
+                      className={`leaderboard-avatar-trigger ${hasPreviewImage(leader) ? 'previewable' : 'non-previewable'}`}
+                      onClick={() => openPreview(index)}
+                      title={hasPreviewImage(leader) ? `Preview ${displayName}` : `${displayName} has no image`}
+                      disabled={!hasPreviewImage(leader)}
+                    >
+                      <UserAvatar
+                        src={leader.profileImage || leader.avatarUrl}
+                        name={displayName}
+                        size="md"
+                        className="leaderboard-avatar-modern"
+                      />
+                    </button>
 
                     <div className="leaderboard-user-meta">
                       <h3>{displayName}</h3>
@@ -101,6 +184,61 @@ function Leaderboard() {
           )}
         </section>
       </div>
+
+      {selectedLeader && selectedImage && (
+        <div
+          className="leaderboard-lightbox-overlay"
+          onClick={closePreview}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Avatar preview"
+        >
+          <div
+            className="leaderboard-lightbox-panel"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="leaderboard-lightbox-close"
+              onClick={closePreview}
+              aria-label="Close avatar preview"
+            >
+              ✕
+            </button>
+
+            <button
+              type="button"
+              className="leaderboard-lightbox-arrow left"
+              onClick={goToPreviousPreview}
+              aria-label="Previous avatar"
+            >
+              ‹
+            </button>
+
+            <img
+              src={selectedImage}
+              alt={composeDisplayName(selectedLeader)}
+              className="leaderboard-lightbox-image"
+            />
+
+            <button
+              type="button"
+              className="leaderboard-lightbox-arrow right"
+              onClick={goToNextPreview}
+              aria-label="Next avatar"
+            >
+              ›
+            </button>
+
+            <div className="leaderboard-lightbox-meta">
+              <strong>{composeDisplayName(selectedLeader)}</strong>
+              <span>
+                Rank #{selectedLeaderIndex + 1} • {selectedLeader.points ?? 0} points
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

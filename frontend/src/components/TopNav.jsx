@@ -1,17 +1,49 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
+import { Bell } from 'lucide-react';
 import api from '../services/api';
 import socket from '../services/socket';
 import UserAvatar from './UserAvatar';
 
+const normalizeNotification = (item) => ({
+  debateId: item?._id || item?.id || '',
+  title: item?.title || 'New debate update',
+  createdAt: item?.createdAt || new Date().toISOString()
+});
+
+const timeAgo = (value) => {
+  const timestamp = new Date(value || Date.now()).getTime();
+  if (Number.isNaN(timestamp)) return 'Just now';
+
+  const diffMs = Date.now() - timestamp;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diffMs < minute) return 'Just now';
+  if (diffMs < hour) return `${Math.floor(diffMs / minute)}m ago`;
+  if (diffMs < day) return `${Math.floor(diffMs / hour)}h ago`;
+  return `${Math.floor(diffMs / day)}d ago`;
+};
+
 function TopNav() {
+  const dropdownRef = useRef(null);
+  const storedNotifications = useMemo(() => JSON.parse(localStorage.getItem('liveNotificationDebates') || '[]'), []);
+
   const [latestDebates, setLatestDebates] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [loadingLatest, setLoadingLatest] = useState(false);
   const [dropdownError, setDropdownError] = useState('');
   const [hasUnread, setHasUnread] = useState(localStorage.getItem('hasUnreadNotifications') === '1');
+  const [unreadCount, setUnreadCount] = useState(
+    localStorage.getItem('hasUnreadNotifications') === '1' ? Math.min(storedNotifications.length, 9) : 0
+  );
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
+
+  useEffect(() => {
+    setLatestDebates((storedNotifications || []).map(normalizeNotification));
+  }, [storedNotifications]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -28,8 +60,9 @@ function TopNav() {
       localStorage.setItem('liveNotificationDebates', JSON.stringify(next));
       localStorage.setItem('hasUnreadNotifications', '1');
       setHasUnread(true);
+      setUnreadCount(Math.min(next.length, 9));
       setLatestDebates((prev) => {
-        const merged = [{ _id: payload.id, title: payload.title }, ...prev.filter((item) => item._id !== payload.id)];
+        const merged = [normalizeNotification(payload), ...prev.filter((item) => item.debateId !== payload.id)];
         return merged.slice(0, 10);
       });
     };
@@ -46,7 +79,7 @@ function TopNav() {
       setLoadingLatest(true);
       setDropdownError('');
       const { data } = await api.get('/api/debates/latest');
-      setLatestDebates(data || []);
+      setLatestDebates((data || []).map(normalizeNotification));
     } catch (error) {
       setDropdownError(error.response?.data?.message || 'Failed to fetch latest debates');
     } finally {
@@ -54,13 +87,40 @@ function TopNav() {
     }
   };
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
+      }
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setShowDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, []);
+
+  const markAllNotifications = () => {
+    localStorage.setItem('hasUnreadNotifications', '0');
+    setHasUnread(false);
+    setUnreadCount(0);
+  };
+
   const handleBellClick = async () => {
     const nextState = !showDropdown;
     setShowDropdown(nextState);
 
     if (nextState) {
-      localStorage.setItem('hasUnreadNotifications', '0');
-      setHasUnread(false);
+      markAllNotifications();
       await fetchLatestDebates();
     }
   };
@@ -86,30 +146,45 @@ function TopNav() {
         </div>
 
         <div className="nav-right nav-user">
-          <div className="notification-wrap">
-            <button className="icon-btn" type="button" onClick={handleBellClick} title="Notifications">
-              🔔
-              {hasUnread && <span className="notification-dot" />}
+          <div className="notification-wrap" ref={dropdownRef}>
+            <button
+              className="icon-btn notif-bell-btn"
+              type="button"
+              onClick={handleBellClick}
+              title="Notifications"
+              aria-label="Open notifications"
+            >
+              <Bell className="notif-bell-icon" strokeWidth={2.4} />
+              {hasUnread && <span className="notification-dot">{unreadCount > 0 ? unreadCount : ''}</span>}
             </button>
+
             {showDropdown && (
               <div className="notification-dropdown">
-                <div className="dropdown-title">Latest Debates</div>
-                {loadingLatest && <p className="subtle">Loading latest debates...</p>}
-                {dropdownError && <p className="error-text">{dropdownError}</p>}
-                {!loadingLatest && !dropdownError && latestDebates.length === 0 && (
-                  <p className="subtle">No latest debates</p>
-                )}
-                {!loadingLatest && !dropdownError && latestDebates.map((debate) => (
-                  <Link
-                    key={debate._id}
-                    to={`/debates/${debate._id}`}
-                    className="latest-item"
-                    onClick={() => setShowDropdown(false)}
-                  >
-                    <span>{debate.title}</span>
-                    <span className="new-badge">NEW</span>
-                  </Link>
-                ))}
+                <div className="notification-dropdown-header">
+                  <span>Notifications</span>
+                  <button type="button" className="notification-mark-btn" onClick={markAllNotifications}>
+                    Mark all
+                  </button>
+                </div>
+
+                <div className="notification-scroll-list">
+                  {loadingLatest && <p className="subtle">Loading notifications...</p>}
+                  {dropdownError && <p className="error-text">{dropdownError}</p>}
+                  {!loadingLatest && !dropdownError && latestDebates.length === 0 && (
+                    <p className="subtle">No notifications yet</p>
+                  )}
+                  {!loadingLatest && !dropdownError && latestDebates.map((debate) => (
+                    <Link
+                      key={debate.debateId}
+                      to={`/debates/${debate.debateId}`}
+                      className="notification-item"
+                      onClick={() => setShowDropdown(false)}
+                    >
+                      <p>New debate: <strong>{debate.title}</strong></p>
+                      <span>{timeAgo(debate.createdAt)}</span>
+                    </Link>
+                  ))}
+                </div>
               </div>
             )}
           </div>

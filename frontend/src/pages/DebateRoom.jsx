@@ -45,18 +45,17 @@ function DebateRoom() {
   const token = useMemo(() => localStorage.getItem('token'), []);
   const user = useMemo(() => JSON.parse(localStorage.getItem('user') || '{}'), []);
 
-  const proParticipant = debate?.participants?.proUser || null;
-  const conParticipant = debate?.participants?.conUser || null;
-  const normalizedUserRole = (user?.role || '').toLowerCase();
-  const isStudentRole = normalizedUserRole === 'student';
-  const isModeratorOrOtherRole =
-    normalizedUserRole === 'moderator' || normalizedUserRole === 'professional' || normalizedUserRole === 'other';
+  const proParticipant = debate?.participants?.proUser || debate?.proUser || null;
+  const conParticipant = debate?.participants?.conUser || debate?.conUser || null;
+  const isLoggedInUser = Boolean(user?.id);
   const isProUser = Boolean(proParticipant?._id && proParticipant._id === user.id);
   const isConUser = Boolean(conParticipant?._id && conParticipant._id === user.id);
   const isParticipant = isProUser || isConUser;
   const debateRole = isProUser ? 'pro' : isConUser ? 'con' : 'audience';
   const bothSidesFilled = Boolean(proParticipant?._id && conParticipant?._id);
-  const canShowJoinButtons = isStudentRole && !isParticipant;
+  const canShowJoinButtons = isLoggedInUser && !isParticipant && !bothSidesFilled;
+  const canJoinPro = canShowJoinButtons && !proParticipant?._id;
+  const canJoinCon = canShowJoinButtons && !conParticipant?._id;
 
   const loadMessages = useCallback(async () => {
     const { data } = await api.get(`/api/messages/${debateId}/grouped`);
@@ -133,27 +132,27 @@ function DebateRoom() {
   useEffect(() => {
     const startValue = debate?.startTime || debate?.scheduledTime;
     const endValue = debate?.endTime;
+    const startMs = startValue ? Date.parse(startValue) : Number.NaN;
+    const endMs = endValue ? Date.parse(endValue) : Number.NaN;
 
-    if (!startValue || !endValue) {
+    if (!startValue || !endValue || Number.isNaN(startMs) || Number.isNaN(endMs)) {
       setSecondsLeft(0);
       setCountdownLabel('Starts In');
       return undefined;
     }
 
     const updateCountdown = () => {
-      const now = Date.now();
-      const start = new Date(startValue).getTime();
-      const end = new Date(endValue).getTime();
+      const nowMs = Date.now();
 
-      if (now < start) {
+      if (nowMs < startMs) {
         setCountdownLabel('Starts In');
-        setSecondsLeft(Math.max(0, Math.floor((start - now) / 1000)));
+        setSecondsLeft(Math.max(0, Math.floor((startMs - nowMs) / 1000)));
         return;
       }
 
-      if (now >= start && now < end) {
+      if (nowMs >= startMs && nowMs < endMs) {
         setCountdownLabel('Ends In');
-        setSecondsLeft(Math.max(0, Math.floor((end - now) / 1000)));
+        setSecondsLeft(Math.max(0, Math.floor((endMs - nowMs) / 1000)));
         return;
       }
 
@@ -223,6 +222,11 @@ function DebateRoom() {
       setDebate((prev) => (prev ? { ...prev, status: payload.status } : prev));
     };
 
+    const onUserJoinedRole = (payload) => {
+      if (payload?.debateId !== debateId || !payload?.participants) return;
+      setDebate((prev) => (prev ? { ...prev, participants: payload.participants } : prev));
+    };
+
     const onSocketError = (payload) => {
       setError(payload?.message || 'Socket error');
     };
@@ -230,12 +234,14 @@ function DebateRoom() {
     socket.on('newArgument', onNewArgument);
     socket.on('debateUpdated', onDebateUpdated);
     socket.on('debateStatusChanged', onDebateStatusChanged);
+    socket.on('userJoinedRole', onUserJoinedRole);
     socket.on('errorMessage', onSocketError);
 
     return () => {
       socket.off('newArgument', onNewArgument);
       socket.off('debateUpdated', onDebateUpdated);
       socket.off('debateStatusChanged', onDebateStatusChanged);
+      socket.off('userJoinedRole', onUserJoinedRole);
       socket.off('errorMessage', onSocketError);
     };
   }, [debateId, token]);
@@ -243,7 +249,7 @@ function DebateRoom() {
   const joinSide = async (side) => {
     try {
       setError('');
-      const { data } = await api.post(`/api/debates/${debateId}/join`, { side });
+      const { data } = await api.post(`/api/debates/${debateId}/join`, { role: side });
       setDebate(data.debate);
     } catch (apiError) {
       setError(apiError.response?.data?.message || 'Failed to join debate side');
@@ -421,14 +427,13 @@ function DebateRoom() {
                         <div className="subtle">No Pro participant yet</div>
                       )}
 
-                      {canShowJoinButtons && (
+                      {canJoinPro && (
                         <button
                           type="button"
                           className="info"
                           onClick={() => joinSide('pro')}
-                          disabled={Boolean(proParticipant)}
                         >
-                          {proParticipant ? 'Pro Filled' : 'Join as Pro'}
+                          Join as Pro
                         </button>
                       )}
                     </div>
@@ -451,14 +456,13 @@ function DebateRoom() {
                         <div className="subtle">No Con participant yet</div>
                       )}
 
-                      {canShowJoinButtons && (
+                      {canJoinCon && (
                         <button
                           type="button"
                           className="ghost"
                           onClick={() => joinSide('con')}
-                          disabled={Boolean(conParticipant)}
                         >
-                          {conParticipant ? 'Con Filled' : 'Join as Con'}
+                          Join as Con
                         </button>
                       )}
                     </div>
@@ -570,20 +574,16 @@ function DebateRoom() {
                     </div>
                   )}
 
-                  {isStudentRole && !isParticipant && bothSidesFilled && (
+                  {!isParticipant && bothSidesFilled && (
                     <p className="subtle">Pro and Con positions are filled. You can still participate in Live Audience Chat.</p>
                   )}
 
-                  {!isStudentRole && !isParticipant && (
-                    <p className="subtle">Only students can join Pro or Con. You can participate in Live Audience Chat.</p>
+                  {!isParticipant && !bothSidesFilled && (
+                    <p className="subtle">Pick an open side to join, or continue as audience in live chat.</p>
                   )}
 
-                  {isStudentRole && isParticipant && (
+                  {isParticipant && (
                     <p className="subtle">You joined as <strong>{debateRole.toUpperCase()}</strong>. You can post only in your side and live audience chat.</p>
-                  )}
-
-                  {isModeratorOrOtherRole && (
-                    <p className="subtle">Role access: audience chat only.</p>
                   )}
                 </div>
               </section>
